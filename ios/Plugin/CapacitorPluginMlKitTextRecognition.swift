@@ -11,6 +11,56 @@ import Vision
     var imageWidth: Double = 0
     var imageHeight: Double = 0
     
+    struct Block {
+        let lines: [Line]
+        var dictionary: [String: Any] {
+            return [
+                "lines": lines.map{$0.dictionary}
+            ]
+        }
+    }
+    
+    struct Line {
+        let elements: [Element]
+        var dictionary: [String: Any] {
+            return [
+                "elements": elements.map{$0.dictionary}
+            ]
+        }
+    }
+    
+    struct Element {
+        let text: String
+        let confidence: Float
+        let boundingBox: BoundingBox
+        let recognizedLanguage: String
+        var dictionary: [String: Any] {
+            return [
+                "text": text,
+                "confidence": confidence,
+                "boundingBox": boundingBox.dictionary,
+                "recognizedLanguage": recognizedLanguage,
+            ]
+        }
+    }
+
+    struct BoundingBox {
+        let left: CGFloat
+        let top: CGFloat
+        let right: CGFloat
+        let bottom: CGFloat
+        var dictionary: [String: Any] {
+            return [
+                "left": left,
+                "top": top,
+                "right": right,
+                "bottom": bottom
+            ]
+        }
+    }
+    
+    
+    
     @objc public func recognize(call: CAPPluginCall, languages: Array<String>, cgImage: CGImage, orientation: CGImagePropertyOrientation) {
         // caching image size to convert the bboxes later
         self.imageWidth = Double(cgImage.width)
@@ -18,7 +68,7 @@ import Vision
         
         // create the request
         let request = VNRecognizeTextRequest(completionHandler: self.handleDetectedText)
-        request.recognitionLevel = .accurate
+        request.recognitionLevel = .fast
         request.recognitionLanguages = languages
         
         // create the rerquest handler
@@ -60,55 +110,47 @@ import Vision
         
         var fullText = ""
         
-        let textBlocks: [[String: Any]] = observations.compactMap { observation in
+        let textBlocks: [Block] = observations.compactMap { observation in
 
-
-            // Find the top observation.
-            guard let candidate = observation.topCandidates(1).first else { return nil }
-            
-            fullText = candidate.string
-            let confidence = candidate.confidence
-            
-            
-            let words = fullText.components(separatedBy: " ")
-            
-            let elements: [[String: Any]] = words.compactMap { word in
-                let stringRange = word.startIndex..<word.endIndex
-                   let wordBoxObservation = try? candidate.boundingBox(for: stringRange)
+            // Find the top 5 candidates.
+            let candidates = observation.topCandidates(3)
+            var seenLines = Set<String>()
+            let lines: [Line] = candidates.compactMap { candidate in
+                var fullText = candidate.string
+                guard !seenLines.contains(fullText) else {
+                    return nil
+                }
+                seenLines.insert(fullText)
+                let confidence = candidate.confidence
+                
+                let words = fullText.components(separatedBy: " ")
+                
+                let elements: [Element] = words.compactMap { word in
+                    let stringRange = word.startIndex..<word.endIndex
+                    let wordBoxObservation = try? candidate.boundingBox(for: stringRange)
                     // Get the normalized CGRect value.
                     let boundingBox = wordBoxObservation?.boundingBox ?? .zero
                     
                     // Convert the rectangle from normalized coordinates to image coordinates.
                     let normalizedBox = VNImageRectForNormalizedRect(boundingBox,
-                                                        Int(self.imageWidth),
-                                                        Int(self.imageHeight))
-                    return [
-                        "text": word,
-                        "confidence": confidence,
-                        "boundingBox": [
-                            "left": normalizedBox.minX,
-                            "top": normalizedBox.maxY,
-                            "right": normalizedBox.maxX,
-                            "bottom": normalizedBox.minY,
-                        ],
-                        "recognizedLanguage": "eng"
-                    ]
+                                                                    Int(self.imageWidth),
+                                                                    Int(self.imageHeight))
                     
+                    
+                    return Element(text: word, confidence: confidence, boundingBox: BoundingBox(left: normalizedBox.minX, top: normalizedBox.maxY, right: normalizedBox.maxX, bottom: normalizedBox.minY), recognizedLanguage: "eng")
+                }
+                
+                let line = Line(elements: elements)
+                
+                return line
             }
             
-            let lines = NSMutableArray()
-            lines.add([
-                "elements": elements
-            ] as [String : Any])
-            
-            return [
-                "lines": lines
-            ]
+            return Block(lines: lines)
         }
         
         self.recognizedText = [
             "text": fullText,
-            "blocks": textBlocks
+            "blocks": textBlocks.map{$0.dictionary}
         ]
         
     }
